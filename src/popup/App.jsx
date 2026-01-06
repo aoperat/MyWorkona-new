@@ -14,6 +14,8 @@ import {
   ChevronLeft,
   Menu,
   Trash2,
+  CheckCircle,
+  Circle,
 } from 'lucide-react';
 import {
   getWorkspaces,
@@ -34,6 +36,10 @@ import {
   ensureUnsavedWorkspace,
   UNSAVED_WORKSPACE_ID,
   setWorkspaceSwitchingState,
+  getTodos,
+  addTodo,
+  toggleTodo,
+  deleteTodo,
 } from '../utils/workspace.js';
 import { 
   getCurrentWindowTabs, 
@@ -186,6 +192,8 @@ export default function App() {
   const [noteContent, setNoteContent] = useState('');
   const [pinnedTabIds, setPinnedTabIds] = useState(new Set());
   const [currentMainTab, setCurrentMainTab] = useState('tabs'); // 'tabs', 'todo', 'note'
+  const [todos, setTodos] = useState([]);
+  const [newTodoText, setNewTodoText] = useState('');
 
   // 초기 데이터 로드
   useEffect(() => {
@@ -298,10 +306,11 @@ export default function App() {
 
   const loadWorkspaceData = async (workspaceId) => {
     try {
-      const [tabs, resourcesData, noteData] = await Promise.all([
+      const [tabs, resourcesData, noteData, todosData] = await Promise.all([
         getSavedTabs(workspaceId),
         getResources(workspaceId),
         getNote(workspaceId),
+        getTodos(workspaceId),
       ]);
       
       // 저장된 탭에서 URL 기준으로 중복 제거
@@ -324,6 +333,7 @@ export default function App() {
       setResources(resourcesData);
       setNote(noteData);
       setNoteContent(noteData);
+      setTodos(todosData);
     } catch (error) {
       console.error('워크스페이스 데이터 로드 실패:', error);
     }
@@ -590,6 +600,41 @@ export default function App() {
       setEditingNote(false);
     } catch (error) {
       console.error('노트 저장 실패:', error);
+    }
+  };
+
+  const handleAddTodo = async (e) => {
+    e.preventDefault();
+    if (!newTodoText.trim() || !activeWorkspaceId) return;
+
+    try {
+      const newTodo = await addTodo(activeWorkspaceId, newTodoText.trim());
+      setTodos([...todos, newTodo]);
+      setNewTodoText('');
+    } catch (error) {
+      console.error('투두 추가 실패:', error);
+    }
+  };
+
+  const handleToggleTodo = async (todoId) => {
+    if (!activeWorkspaceId) return;
+    try {
+      await toggleTodo(activeWorkspaceId, todoId);
+      setTodos(todos.map(t => 
+        t.id === todoId ? { ...t, completed: !t.completed } : t
+      ));
+    } catch (error) {
+      console.error('투두 상태 변경 실패:', error);
+    }
+  };
+
+  const handleTodoDelete = async (todoId) => {
+    if (!activeWorkspaceId) return;
+    try {
+      await deleteTodo(activeWorkspaceId, todoId);
+      setTodos(todos.filter(t => t.id !== todoId));
+    } catch (error) {
+      console.error('투두 삭제 실패:', error);
     }
   };
 
@@ -1016,9 +1061,80 @@ export default function App() {
                   )}
 
                   {currentMainTab === 'todo' && (
-                    <section>
-                      <div className="py-12 text-center bg-slate-50 rounded-2xl border border-slate-100">
-                        <p className="text-slate-500 font-medium">Todo 기능은 준비 중입니다.</p>
+                    <section className="h-full flex flex-col">
+                      <div className="bg-white rounded-xl border border-slate-200 overflow-hidden flex flex-col h-full min-h-[400px]">
+                        {/* Todo Input Header */}
+                        <div className="p-4 border-b border-slate-100 bg-slate-50">
+                          <form onSubmit={handleAddTodo} className="flex gap-2">
+                            <input
+                              type="text"
+                              value={newTodoText}
+                              onChange={(e) => setNewTodoText(e.target.value)}
+                              placeholder="새 할 일 추가..."
+                              className="flex-1 px-4 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-500 transition-all"
+                            />
+                            <button
+                              type="submit"
+                              disabled={!newTodoText.trim()}
+                              className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium text-sm flex items-center gap-2"
+                            >
+                              <Plus size={16} />
+                              추가
+                            </button>
+                          </form>
+                        </div>
+
+                        {/* Todo List */}
+                        <div className="flex-1 overflow-y-auto p-2">
+                          {todos.length > 0 ? (
+                            <div className="space-y-1">
+                              {todos.map((todo) => (
+                                <div
+                                  key={todo.id}
+                                  className={`group flex items-center gap-3 p-3 rounded-lg transition-all hover:bg-slate-50 ${
+                                    todo.completed ? 'bg-slate-50/50' : ''
+                                  }`}
+                                >
+                                  <button
+                                    onClick={() => handleToggleTodo(todo.id)}
+                                    className={`flex-shrink-0 transition-colors ${
+                                      todo.completed ? 'text-green-500' : 'text-slate-300 hover:text-slate-400'
+                                    }`}
+                                  >
+                                    {todo.completed ? (
+                                      <CheckCircle size={20} className="fill-green-50" />
+                                    ) : (
+                                      <Circle size={20} />
+                                    )}
+                                  </button>
+                                  
+                                  <span
+                                    className={`flex-1 text-sm transition-all ${
+                                      todo.completed ? 'text-slate-400 line-through' : 'text-slate-700'
+                                    }`}
+                                  >
+                                    {todo.text}
+                                  </span>
+
+                                  <button
+                                    onClick={() => handleTodoDelete(todo.id)}
+                                    className="opacity-0 group-hover:opacity-100 p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-md transition-all"
+                                  >
+                                    <Trash2 size={14} />
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="h-full flex flex-col items-center justify-center text-center p-8 text-slate-400">
+                              <div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center mb-4">
+                                <CheckCircle size={32} className="text-slate-200" />
+                              </div>
+                              <p className="text-sm font-medium text-slate-500">할 일이 없습니다.</p>
+                              <p className="text-xs mt-1">새로운 할 일을 추가하여 하루를 계획하세요.</p>
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </section>
                   )}

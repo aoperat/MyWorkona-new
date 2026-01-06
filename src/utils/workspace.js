@@ -9,6 +9,7 @@ const STORAGE_KEYS = {
   SAVED_TABS: 'savedTabs',
   RESOURCES: 'resources',
   NOTES: 'notes',
+  TODOS: 'todos',
   ACTIVE_WORKSPACE_ID: 'activeWorkspaceId',
   IS_SWITCHING_WORKSPACE: 'isSwitchingWorkspace',
 };
@@ -138,6 +139,7 @@ export async function deleteWorkspace(workspaceId) {
   await deleteSavedTabsByWorkspace(workspaceId);
   await deleteResourcesByWorkspace(workspaceId);
   await deleteNote(workspaceId);
+  await deleteTodos(workspaceId);
 }
 
 /**
@@ -376,4 +378,83 @@ async function deleteNote(workspaceId) {
   const allNotes = data[STORAGE_KEYS.NOTES] || {};
   delete allNotes[workspaceId];
   await setStorage({ [STORAGE_KEYS.NOTES]: allNotes });
+}
+/**
+ * ?�두 목록 가?�오�? * @param {string} workspaceId - ?�크?�페?�스 ID
+ * @returns {Promise<Array>}
+ */
+export async function getTodos(workspaceId) {
+  const data = await getStorage(STORAGE_KEYS.TODOS);
+  const allTodos = data[STORAGE_KEYS.TODOS] || {};
+  return allTodos[workspaceId] || [];
+}
+
+/**
+ * ?�두 목록 ?�?? * @param {string} workspaceId - ?�크?�페?�스 ID
+ * @param {Array} todos - ?�두 배열
+ * @returns {Promise<void>}
+ */
+export async function saveTodos(workspaceId, todos) {
+  const data = await getStorage(STORAGE_KEYS.TODOS);
+  const allTodos = data[STORAGE_KEYS.TODOS] || {};
+  allTodos[workspaceId] = todos;
+  await setStorage({ [STORAGE_KEYS.TODOS]: allTodos });
+}
+
+/**
+ * ?�두 추�?
+ * @param {string} workspaceId - ?�크?�페?�스 ID
+ * @param {string} text - ?�두 ?�용
+ * @returns {Promise<Object>}
+ */
+export async function addTodo(workspaceId, text) {
+  const todos = await getTodos(workspaceId);
+  const newTodo = {
+    id: `todo-${Date.now()}-${Math.random()}`,
+    text,
+    completed: false,
+    createdAt: Date.now(),
+  };
+  todos.push(newTodo);
+  await saveTodos(workspaceId, todos);
+  return newTodo;
+}
+
+/**
+ * ?�두 ?�태 ?��?
+ * @param {string} workspaceId - ?�크?�페?�스 ID
+ * @param {string} todoId - ?�두 ID
+ * @returns {Promise<void>}
+ */
+export async function toggleTodo(workspaceId, todoId) {
+  const todos = await getTodos(workspaceId);
+  const index = todos.findIndex((t) => t.id === todoId);
+  if (index !== -1) {
+    todos[index].completed = !todos[index].completed;
+    await saveTodos(workspaceId, todos);
+  }
+}
+
+/**
+ * ?�두 ??��
+ * @param {string} workspaceId - ?�크?�페?�스 ID
+ * @param {string} todoId - ?�두 ID
+ * @returns {Promise<void>}
+ */
+export async function deleteTodo(workspaceId, todoId) {
+  const todos = await getTodos(workspaceId);
+  const filtered = todos.filter((t) => t.id !== todoId);
+  await saveTodos(workspaceId, filtered);
+}
+
+/**
+ * ?�두 목록 ??�� (?�크?�페?�스 ??�� ??
+ * @param {string} workspaceId - ?�크?�페?�스 ID
+ * @returns {Promise<void>}
+ */
+async function deleteTodos(workspaceId) {
+  const data = await getStorage(STORAGE_KEYS.TODOS);
+  const allTodos = data[STORAGE_KEYS.TODOS] || {};
+  delete allTodos[workspaceId];
+  await setStorage({ [STORAGE_KEYS.TODOS]: allTodos });
 }
