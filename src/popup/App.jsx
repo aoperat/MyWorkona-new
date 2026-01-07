@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Layout,
   Plus,
@@ -203,6 +203,7 @@ export default function App() {
   const [newTodoText, setNewTodoText] = useState('');
   const [syncStatus, setSyncStatus] = useState({ enabled: true, loading: true });
   const [isSwitchingWorkspace, setIsSwitchingWorkspace] = useState(false);
+  const currentSwitchIdRef = useRef(null); // 현재 진행 중인 전환 ID
 
   // 초기 데이터 로드
   useEffect(() => {
@@ -244,46 +245,72 @@ export default function App() {
 
   // 활성 워크스페이스 변경 시 데이터 로드
   useEffect(() => {
+    // 전환 중이면 무시 (전환 완료 후 handleWorkspaceChange에서 로드)
+    if (isSwitchingWorkspace) {
+      return;
+    }
+    
     if (activeWorkspaceId) {
       loadWorkspaceData(activeWorkspaceId);
       loadCurrentTabs();
     }
-  }, [activeWorkspaceId]);
+  }, [activeWorkspaceId, isSwitchingWorkspace]);
 
   // 탭 변경 시 실시간 업데이트
   useEffect(() => {
     const handleTabCreated = async (tab) => {
+      // 전환 중이면 무시
+      if (isSwitchingWorkspace) {
+        return;
+      }
+      
       // MyWorkona 탭이 아닌 경우에만 업데이트
       const myWorkonaUrl = chrome.runtime.getURL('newtab/index.html');
       if (tab.url && tab.url !== myWorkonaUrl) {
         await loadCurrentTabs();
-        if (activeWorkspaceId) {
+        if (activeWorkspaceId && !isSwitchingWorkspace) {
           // background.js에서 워크스페이스에 탭을 추가하는 시간을 고려하여 약간의 지연 후 업데이트
           setTimeout(async () => {
-            await loadWorkspaceData(activeWorkspaceId);
+            // 다시 한번 전환 중 체크
+            if (!isSwitchingWorkspace) {
+              await loadWorkspaceData(activeWorkspaceId);
+            }
           }, 100);
         }
       }
     };
 
     const handleTabRemoved = async (tabId, removeInfo) => {
+      // 전환 중이면 무시
+      if (isSwitchingWorkspace) {
+        return;
+      }
+      
       await loadCurrentTabs();
-      if (activeWorkspaceId) {
+      if (activeWorkspaceId && !isSwitchingWorkspace) {
         await loadWorkspaceData(activeWorkspaceId);
       }
     };
 
     const handleTabUpdated = async (tabId, changeInfo, tab) => {
+      // 전환 중이면 무시
+      if (isSwitchingWorkspace) {
+        return;
+      }
+      
       // 로딩 완료 시에만 업데이트
       if (changeInfo.status === 'complete') {
         // MyWorkona 탭이 아닌 경우에만 업데이트
         const myWorkonaUrl = chrome.runtime.getURL('newtab/index.html');
         if (tab.url && tab.url !== myWorkonaUrl) {
           await loadCurrentTabs();
-          if (activeWorkspaceId) {
+          if (activeWorkspaceId && !isSwitchingWorkspace) {
             // background.js에서 워크스페이스에 탭을 추가하는 시간을 고려하여 약간의 지연 후 업데이트
             setTimeout(async () => {
-              await loadWorkspaceData(activeWorkspaceId);
+              // 다시 한번 전환 중 체크
+              if (!isSwitchingWorkspace) {
+                await loadWorkspaceData(activeWorkspaceId);
+              }
             }, 100);
           }
         }
@@ -301,7 +328,7 @@ export default function App() {
       chrome.tabs.onRemoved.removeListener(handleTabRemoved);
       chrome.tabs.onUpdated.removeListener(handleTabUpdated);
     };
-  }, [activeWorkspaceId]);
+  }, [activeWorkspaceId, isSwitchingWorkspace]);
 
   const loadData = async () => {
     try {
@@ -375,15 +402,14 @@ export default function App() {
   };
 
   const handleWorkspaceChange = async (workspaceId) => {
-    // 이미 전환 중이면 무시
-    if (isSwitchingWorkspace) {
-      return;
-    }
-    
     // 같은 워크스페이스로 전환하려고 하면 무시
     if (workspaceId === activeWorkspaceId) {
       return;
     }
+    
+    // 새로운 전환 ID 생성
+    const switchId = `switch-${Date.now()}-${Math.random()}`;
+    currentSwitchIdRef.current = switchId;
     
     // 최소 딜레이를 보장하기 위한 시작 시간 기록
     const startTime = Date.now();
@@ -395,6 +421,12 @@ export default function App() {
       
       // 워크스페이스 전환 시작 알림 (Background 스크립트가 탭 변경을 무시하도록 함)
       await setWorkspaceSwitchingState(true);
+      
+      // 전환이 취소되었는지 확인
+      if (currentSwitchIdRef.current !== switchId) {
+        // 이 전환이 취소되었음
+        return;
+      }
       
       const previousWorkspaceId = activeWorkspaceId;
       
@@ -425,9 +457,19 @@ export default function App() {
         await saveTabs(previousWorkspaceId, tabsToSave);
       }
       
+      // 전환이 취소되었는지 확인
+      if (currentSwitchIdRef.current !== switchId) {
+        return;
+      }
+      
       // 워크스페이스 ID 설정
       setActiveWorkspaceIdState(workspaceId);
       await setActiveWorkspaceId(workspaceId);
+
+      // 전환이 취소되었는지 확인
+      if (currentSwitchIdRef.current !== switchId) {
+        return;
+      }
 
       // 현재 열린 탭 가져오기
       const currentTabs = await getCurrentWindowTabs();
@@ -451,7 +493,16 @@ export default function App() {
           .map(tab => tab.id);
         
         if (tabsToClose.length > 0) {
+          // 전환이 취소되었는지 확인
+          if (currentSwitchIdRef.current !== switchId) {
+            return;
+          }
           await closeTabs(tabsToClose);
+        }
+        
+        // 전환이 취소되었는지 확인
+        if (currentSwitchIdRef.current !== switchId) {
+          return;
         }
         
         // UNSAVED 워크스페이스에 저장된 탭이 있으면 열기
@@ -498,7 +549,16 @@ export default function App() {
           .map(tab => tab.id);
         
         if (tabsToClose.length > 0) {
+          // 전환이 취소되었는지 확인
+          if (currentSwitchIdRef.current !== switchId) {
+            return;
+          }
           await closeTabs(tabsToClose);
+        }
+        
+        // 전환이 취소되었는지 확인
+        if (currentSwitchIdRef.current !== switchId) {
+          return;
         }
         
         // 새 워크스페이스에 저장된 탭 가져오기
@@ -536,23 +596,40 @@ export default function App() {
       }
     } catch (error) {
       console.error('워크스페이스 변경 실패:', error);
-      setIsSwitchingWorkspace(false);
-      await setWorkspaceSwitchingState(false);
+      // 에러 발생 시에도 취소 체크
+      if (currentSwitchIdRef.current === switchId) {
+        setIsSwitchingWorkspace(false);
+        await setWorkspaceSwitchingState(false);
+      }
     } finally {
+      // 취소된 전환은 무시
+      if (currentSwitchIdRef.current !== switchId) {
+        return;
+      }
+      
       // 최소 딜레이 보장
       const elapsed = Date.now() - startTime;
       const remainingDelay = Math.max(0, MIN_SWITCH_DELAY - elapsed);
       
       setTimeout(async () => {
+        // 다시 한번 취소 체크
+        if (currentSwitchIdRef.current !== switchId) {
+          return;
+        }
+        
         await setWorkspaceSwitchingState(false);
         // 전환 완료 후 현재 상태와 동기화 (누락된 탭이 없도록)
-        if (workspaceId) {
+        if (workspaceId && currentSwitchIdRef.current === switchId) {
           await loadWorkspaceData(workspaceId);
           await loadCurrentTabs();
         }
         // 전환 중 상태 해제 (추가 딜레이로 연속 전환 방지)
         setTimeout(() => {
-          setIsSwitchingWorkspace(false);
+          // 마지막 취소 체크
+          if (currentSwitchIdRef.current === switchId) {
+            setIsSwitchingWorkspace(false);
+            currentSwitchIdRef.current = null;
+          }
         }, 100);
       }, 300 + remainingDelay);
     }
