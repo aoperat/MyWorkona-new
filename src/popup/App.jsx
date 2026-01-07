@@ -818,16 +818,23 @@ export default function App() {
         await loadCurrentTabs();
       } else {
         // 일반 워크스페이스인 경우: 저장된 탭에서 제거하고 열려있으면 닫기
-        const tab = savedTabs.find(t => t.id === tabId);
-        if (tab) {
+        const savedTab = savedTabs.find(t => t.id === tabId);
+        if (savedTab) {
+          // 현재 열려있는 탭에서 같은 URL의 탭 찾기 (고정된 탭 제외)
+          const pinnedTabs = await getPinnedTabs();
+          const pinnedTabIds = new Set(pinnedTabs.map(tab => tab.id));
+          const currentTab = currentTabs.find(ct => 
+            ct.url === savedTab.url && !pinnedTabIds.has(ct.chromeTabId)
+          );
+          
+          // 열려있는 탭이면 닫기
+          if (currentTab && currentTab.chromeTabId) {
+            await closeTabs([currentTab.chromeTabId]);
+          }
+          
           // 저장된 탭 목록에서 제거
           const updatedTabs = savedTabs.filter(t => t.id !== tabId);
           await saveTabs(activeWorkspaceId, updatedTabs);
-          
-          // 열려있는 탭이면 닫기
-          if (tab.chromeTabId) {
-            await closeTabs([tab.chromeTabId]);
-          }
           
           // 워크스페이스 데이터 새로고침
           await loadWorkspaceData(activeWorkspaceId);
