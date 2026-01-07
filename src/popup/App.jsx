@@ -17,6 +17,8 @@ import {
   CheckCircle,
   Circle,
   Loader2,
+  Download,
+  Upload,
 } from 'lucide-react';
 import {
   getWorkspaces,
@@ -43,7 +45,7 @@ import {
   deleteTodo,
   reorderWorkspaces,
 } from '../utils/workspace.js';
-import { checkSyncStatus } from '../utils/storage.js';
+import { checkSyncStatus, exportStorageData, importStorageData } from '../utils/storage.js';
 import { 
   getCurrentWindowTabs, 
   convertChromeTabToAppTab, 
@@ -204,6 +206,51 @@ export default function App() {
   const [syncStatus, setSyncStatus] = useState({ enabled: true, loading: true });
   const [isSwitchingWorkspace, setIsSwitchingWorkspace] = useState(false);
   const currentSwitchIdRef = useRef(null); // 현재 진행 중인 전환 ID
+  const [isSettingsOpen, setSettingsOpen] = useState(false); // 설정 모달 상태
+
+  // 데이터 내보내기 핸들러
+  const handleExport = async () => {
+    try {
+      const jsonString = await exportStorageData();
+      const blob = new Blob([jsonString], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `myworkona-backup-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Export failed:', error);
+      alert('백업 생성 중 오류가 발생했습니다.');
+    }
+  };
+
+  // 데이터 가져오기 핸들러
+  const handleImport = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    if (!confirm('현재 데이터가 모두 삭제되고 백업 데이터로 덮어씌워집니다. 계속하시겠습니까?')) {
+      e.target.value = ''; // 초기화
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      try {
+        await importStorageData(event.target.result);
+        alert('데이터 복원이 완료되었습니다. 앱을 재시작합니다.');
+        window.location.reload();
+      } catch (error) {
+        console.error('Import failed:', error);
+        alert('데이터 복원 중 오류가 발생했습니다. 올바른 백업 파일인지 확인해주세요.');
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = ''; // 초기화
+  };
 
   // 초기 데이터 로드
   useEffect(() => {
@@ -1144,7 +1191,10 @@ export default function App() {
               <div className="text-amber-700">다른 기기에서 데이터를 가져올 수 없습니다. Chrome 동기화 설정을 확인하세요.</div>
             </div>
           )}
-          <div className="flex items-center gap-3 p-2 rounded-lg bg-white shadow-sm border border-slate-100 cursor-pointer hover:bg-slate-50">
+          <div 
+            className="flex items-center gap-3 p-2 rounded-lg bg-white shadow-sm border border-slate-100 cursor-pointer hover:bg-slate-50"
+            onClick={() => setSettingsOpen(true)}
+          >
             <div className="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center text-xs font-bold text-slate-600">
               U
             </div>
@@ -1482,6 +1532,61 @@ export default function App() {
           </div>
         </div>
       </main>
+
+      {/* Settings Modal */}
+      {isSettingsOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="bg-white rounded-xl shadow-xl w-[400px] overflow-hidden animate-in fade-in zoom-in duration-200">
+            <div className="flex items-center justify-between p-4 border-b border-slate-100">
+              <h3 className="font-bold text-slate-800 flex items-center gap-2">
+                <Settings size={18} />
+                설정
+              </h3>
+              <button 
+                onClick={() => setSettingsOpen(false)}
+                className="p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            
+            <div className="p-6 space-y-6">
+              {/* Data Management Section */}
+              <div className="space-y-3">
+                <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">데이터 관리</h4>
+                
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    onClick={handleExport}
+                    className="flex flex-col items-center justify-center gap-2 p-4 border border-slate-200 rounded-xl hover:bg-slate-50 hover:border-slate-300 transition-all text-slate-600 hover:text-indigo-600 group"
+                  >
+                    <div className="w-10 h-10 rounded-full bg-slate-100 group-hover:bg-indigo-50 flex items-center justify-center text-slate-500 group-hover:text-indigo-600 transition-colors">
+                      <Download size={20} />
+                    </div>
+                    <span className="text-sm font-medium">데이터 백업</span>
+                    <span className="text-[10px] text-slate-400">JSON 파일로 저장</span>
+                  </button>
+
+                  <label className="flex flex-col items-center justify-center gap-2 p-4 border border-slate-200 rounded-xl hover:bg-slate-50 hover:border-slate-300 transition-all text-slate-600 hover:text-indigo-600 cursor-pointer group">
+                    <div className="w-10 h-10 rounded-full bg-slate-100 group-hover:bg-indigo-50 flex items-center justify-center text-slate-500 group-hover:text-indigo-600 transition-colors">
+                      <Upload size={20} />
+                    </div>
+                    <span className="text-sm font-medium">데이터 복원</span>
+                    <span className="text-[10px] text-slate-400">JSON 파일 불러오기</span>
+                    <input type="file" accept=".json" onChange={handleImport} className="hidden" />
+                  </label>
+                </div>
+              </div>
+
+              {/* Info Section */}
+              <div className="p-3 bg-slate-50 rounded-lg text-xs text-slate-500 space-y-1">
+                <p>• <strong>백업:</strong> 현재의 모든 워크스페이스, 탭, 메모 정보를 파일로 저장합니다.</p>
+                <p>• <strong>복원:</strong> 백업 파일을 불러와 현재 상태를 덮어씁니다. (주의: 현재 데이터는 삭제됨)</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

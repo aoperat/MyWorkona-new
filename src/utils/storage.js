@@ -174,3 +174,66 @@ export function onStorageChanged(callback) {
     }
   });
 }
+
+/**
+ * 데이터 백업 (내보내기)
+ * @returns {Promise<string>} JSON 문자열
+ */
+export async function exportStorageData() {
+  return navigator.locks.request(STORAGE_LOCK_NAME, async () => {
+    return new Promise((resolve, reject) => {
+      chrome.storage.local.get(null, (items) => {
+        if (chrome.runtime.lastError) {
+          reject(chrome.runtime.lastError);
+        } else {
+          // 메타데이터 추가
+          const backupData = {
+            version: 1,
+            exportedAt: Date.now(),
+            data: items,
+          };
+          resolve(JSON.stringify(backupData, null, 2));
+        }
+      });
+    });
+  });
+}
+
+/**
+ * 데이터 복원 (가져오기)
+ * @param {string} jsonString - 가져올 JSON 문자열
+ * @returns {Promise<void>}
+ */
+export async function importStorageData(jsonString) {
+  return navigator.locks.request(STORAGE_LOCK_NAME, async () => {
+    return new Promise((resolve, reject) => {
+      try {
+        const parsed = JSON.parse(jsonString);
+        
+        // 데이터 유효성 검사 (간단하게)
+        let dataToRestore = parsed;
+        if (parsed.version && parsed.data) {
+          dataToRestore = parsed.data;
+        }
+
+        // 기존 데이터 삭제 후 덮어쓰기 (클린 복원)
+        chrome.storage.local.clear(() => {
+          if (chrome.runtime.lastError) {
+            reject(chrome.runtime.lastError);
+            return;
+          }
+          
+          chrome.storage.local.set(dataToRestore, () => {
+            if (chrome.runtime.lastError) {
+              reject(chrome.runtime.lastError);
+            } else {
+              resolve();
+            }
+          });
+        });
+      } catch (error) {
+        reject(new Error('Invalid JSON data'));
+      }
+    });
+  });
+}

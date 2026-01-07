@@ -6,11 +6,6 @@ import {
   getWorkspaceSwitchingState,
 } from '../utils/backgroundHelpers.js';
 
-import {
-  moveTabToIndex,
-  pinTabToFirstPinned,
-} from '../utils/tabs.js';
-
 import { migrateToLocal } from '../utils/storage.js';
 
 const UNSAVED_WORKSPACE_ID = 'unsaved';
@@ -32,6 +27,46 @@ function debounce(func, delay, key) {
     delete debounceTimers[key];
     func();
   }, delay);
+}
+
+/**
+ * 탭을 고정하고 첫 번째 위치로 이동 (안전한 내부 구현)
+ * @param {number} tabId - 탭 ID
+ */
+async function pinTabToFirstPinned(tabId) {
+  // 재시도 횟수와 간격을 늘려서 드래그 중인 경우에도 대응
+  for (let i = 0; i < 10; i++) {
+    try {
+      // 1. 탭 정보 확인
+      const tab = await chrome.tabs.get(tabId);
+      
+      // 2. 고정되어 있지 않다면 고정
+      if (!tab.pinned) {
+        await chrome.tabs.update(tabId, { pinned: true });
+      }
+      
+      // 3. 0번 인덱스로 이동
+      if (tab.index !== 0) {
+        await chrome.tabs.move(tabId, { index: 0 });
+      }
+      
+      // 위치 확인 후 성공했으면 종료
+      const currentTab = await chrome.tabs.get(tabId);
+      if (currentTab.index === 0 && currentTab.pinned) {
+        break;
+      }
+    } catch (error) {
+      // 드래그 중일 때 발생하는 에러는 무시하고 재시도
+      if (error.message.includes('Tabs cannot be edited right now')) {
+        // console.log('탭 드래그 중... 재시도 대기');
+      } else {
+        console.error('탭 고정 및 위치 조정 실패:', error);
+      }
+    }
+    
+    // 잠시 대기 (드래그가 끝날 때까지 충분한 시간 확보)
+    await new Promise(resolve => setTimeout(resolve, 200));
+  }
 }
 
 /**
@@ -61,7 +96,7 @@ async function syncWorkspaceWithCurrentTabs(workspaceId) {
     );
     
     // 워크스페이스의 저장된 탭 가져오기
-    // Local Storage 사용 (Utils의 getStorage는 Local을 사용함)
+    // Local Storage 사용
     const savedTabs = await new Promise((resolve, reject) => {
       chrome.storage.local.get(['savedTabs'], (result) => {
         if (chrome.runtime.lastError) {
@@ -82,9 +117,6 @@ async function syncWorkspaceWithCurrentTabs(workspaceId) {
     // 변경사항이 있으면 저장
     if (tabsToKeep.length !== savedTabs.length) {
       await new Promise((resolve, reject) => {
-        // navigator.locks는 Service Worker에서도 사용 가능하지만,
-        // 여기서는 간단하게 storage.local.get -> set 패턴 사용
-        // (storage.js의 setStorage를 import해서 쓰면 더 좋지만 순환 참조 주의)
         chrome.storage.local.get(['savedTabs'], (result) => {
           if (chrome.runtime.lastError) {
             reject(chrome.runtime.lastError);
@@ -134,12 +166,8 @@ chrome.tabs.onCreated.addListener(async (tab) => {
   // MyWorkona 탭인 경우 고정하고 첫 번째 위치로 이동
   if (tab.url && tab.url.startsWith('chrome-extension://')) {
     const myWorkonaUrl = chrome.runtime.getURL('newtab/index.html');
-    if (tab.url === myWorkonaUrl && tab.id) {
-      try {
-        await pinTabToFirstPinned(tab.id);
-      } catch (error) {
-        console.error('MyWorkona 탭 위치 조정 실패:', error);
-      }
+    if (tab.url.startsWith(myWorkonaUrl) && tab.id) {
+      await pinTabToFirstPinned(tab.id);
       return;
     }
   }
@@ -185,14 +213,11 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   const isSwitching = await getWorkspaceSwitchingState();
   if (isSwitching) return;
 
+  // MyWorkona 탭인 경우 고정하고 첫 번째 위치로 이동
   if (tab.url && tab.url.startsWith('chrome-extension://')) {
     const myWorkonaUrl = chrome.runtime.getURL('newtab/index.html');
-    if (tab.url === myWorkonaUrl && tab.id) {
-      try {
-        await pinTabToFirstPinned(tab.id);
-      } catch (error) {
-        console.error('MyWorkona 탭 위치 조정 실패:', error);
-      }
+    if (tab.url.startsWith(myWorkonaUrl) && tab.id) {
+      await pinTabToFirstPinned(tab.id);
       return;
     }
   }
@@ -214,9 +239,6 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
           return;
         }
         
-        // 이전 URL 제거 로직은 복잡성을 줄이기 위해 생략하거나
-        // syncWorkspaceWithCurrentTabs가 처리하도록 맡김
-        
         const tabData = {
           title: tab.title || 'Untitled',
           url: tab.url,
@@ -236,8 +258,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
 
 // 탭이 닫힐 때
 chrome.tabs.onRemoved.addListener(async (tabId, removeInfo) => {
-  // 디바운스 적용: 500ms (여러 탭이 동시에 닫힐 때 유용)
-  // 키를 'global-remove'로 사용하여 여러 삭제 이벤트를 하나로 묶음
+  // 디바운스 적용: 500ms
   debounce(async () => {
     try {
       const isSwitching = await getWorkspaceSwitchingState();
@@ -248,14 +269,35 @@ chrome.tabs.onRemoved.addListener(async (tabId, removeInfo) => {
         return;
       }
       
-      // syncWorkspaceWithCurrentTabs가 현재 열려있는 탭을 기준으로
-      // 저장된 탭을 정리하므로, 닫힌 탭을 개별적으로 처리할 필요 없이
-      // 동기화 함수만 호출하면 됨.
       await syncWorkspaceWithCurrentTabs(activeWorkspaceId);
     } catch (error) {
       console.error('탭 제거 처리 실패:', error);
     }
   }, 500, 'global-remove');
+});
+
+// 탭이 이동될 때 (위치 변경) - MyWorkona 탭 위치 강제
+chrome.tabs.onMoved.addListener(async (tabId, moveInfo) => {
+  const isSwitching = await getWorkspaceSwitchingState();
+  if (isSwitching) return;
+
+  // 어떤 탭이 이동하든, MyWorkona 탭이 0번에 있는지 확인하고 강제 이동
+  debounce(async () => {
+    try {
+      const myWorkonaUrl = chrome.runtime.getURL('newtab/index.html');
+      
+      // 현재 창의 모든 탭을 가져와서 직접 필터링
+      const tabs = await chrome.tabs.query({ currentWindow: true });
+      const myWorkonaTab = tabs.find(t => t.url && t.url.startsWith(myWorkonaUrl));
+
+      if (myWorkonaTab && myWorkonaTab.index !== 0) {
+        console.log('MyWorkona 탭 위치 강제 조정 (Index 0)');
+        await pinTabToFirstPinned(myWorkonaTab.id);
+      }
+    } catch (error) {
+      console.error('탭 위치 강제 조정 실패:', error);
+    }
+  }, 500, 'enforce-position');
 });
 
 // 확장 프로그램 아이콘 클릭 시 새 탭 열기 또는 기존 탭 활성화
@@ -269,18 +311,10 @@ chrome.action.onClicked.addListener(async (tab) => {
     if (existingTab) {
       await chrome.tabs.update(existingTab.id, { active: true });
       await chrome.windows.update(currentWindow.id, { focused: true });
-      try {
-        await pinTabToFirstPinned(existingTab.id);
-      } catch (error) {
-        console.error('MyWorkona 탭 위치 조정 실패:', error);
-      }
+      await pinTabToFirstPinned(existingTab.id);
     } else {
       const newTab = await chrome.tabs.create({ url: myWorkonaUrl, pinned: true });
-      try {
-        await pinTabToFirstPinned(newTab.id);
-      } catch (error) {
-        console.error('MyWorkona 탭 위치 조정 실패:', error);
-      }
+      await pinTabToFirstPinned(newTab.id);
     }
   } catch (error) {
     console.error('MyWorkona 탭 활성화/생성 실패:', error);

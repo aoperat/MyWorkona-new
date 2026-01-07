@@ -62,7 +62,9 @@ export async function createTab(url, active = true) {
 export async function createTabs(urls, active = true, pinFirst = false) {
   const tabs = [];
   for (let i = 0; i < urls.length; i++) {
-    const tab = await createTab(urls[i], active && i === 0);
+    // 첫 번째 탭만 활성화, 나머지는 비활성 상태로 생성
+    const isActive = active && i === 0;
+    const tab = await createTab(urls[i], isActive);
     tabs.push(tab);
     
     // 첫 번째 탭을 고정하고 첫 번째 위치로 이동
@@ -71,6 +73,24 @@ export async function createTabs(urls, active = true, pinFirst = false) {
         await pinTabToFirst(tab.id);
       } catch (error) {
         console.error('탭 고정 실패:', error);
+      }
+    }
+
+    // 비활성 탭은 메모리 절약을 위해 즉시 Discard (Lazy Loading)
+    if (!isActive && tab.id) {
+      try {
+        // 약간의 지연을 주어 탭 생성이 안정화된 후 discard 시도
+        // (바로 discard하면 일부 경우 실패할 수 있음)
+        setTimeout(() => {
+          chrome.tabs.discard(tab.id, () => {
+            if (chrome.runtime.lastError) {
+              // 실패해도 치명적이지 않으므로 로그만 남김
+              console.warn(`Tab ${tab.id} discard failed:`, chrome.runtime.lastError);
+            }
+          });
+        }, 300);
+      } catch (error) {
+        console.warn('탭 메모리 최적화 실패:', error);
       }
     }
   }
