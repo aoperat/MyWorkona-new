@@ -41,6 +41,7 @@ import {
   toggleTodo,
   deleteTodo,
 } from '../utils/workspace.js';
+import { checkSyncStatus } from '../utils/storage.js';
 import { 
   getCurrentWindowTabs, 
   convertChromeTabToAppTab, 
@@ -194,11 +195,28 @@ export default function App() {
   const [currentMainTab, setCurrentMainTab] = useState('tabs'); // 'tabs', 'todo', 'note'
   const [todos, setTodos] = useState([]);
   const [newTodoText, setNewTodoText] = useState('');
+  const [syncStatus, setSyncStatus] = useState({ enabled: true, loading: true });
 
   // 초기 데이터 로드
   useEffect(() => {
     loadData();
+    checkSyncStatusOnLoad();
   }, []);
+
+  // 동기화 상태 확인
+  const checkSyncStatusOnLoad = async () => {
+    try {
+      const status = await checkSyncStatus();
+      setSyncStatus({ ...status, loading: false });
+      
+      if (!status.enabled) {
+        console.warn('동기화가 비활성화되어 있습니다:', status.error);
+      }
+    } catch (error) {
+      console.error('동기화 상태 확인 실패:', error);
+      setSyncStatus({ enabled: false, error: '동기화 상태를 확인할 수 없습니다', loading: false });
+    }
+  };
 
   // 고정된 탭 ID 목록 로드
   useEffect(() => {
@@ -690,9 +708,8 @@ export default function App() {
             await closeTabs([data.tab.chromeTabId]);
           }
           
-          // 워크스페이스 데이터 새로고침
+          // 워크스페이스 데이터 새로고침 (활성 워크스페이스의 데이터만 로드)
           await loadWorkspaceData(activeWorkspaceId);
-          await loadWorkspaceData(targetWorkspaceId);
           
           // 대상 워크스페이스가 활성화되어 있으면 탭 열기
           // (B를 열 때 그 탭이 열려야 함)
@@ -916,14 +933,29 @@ export default function App() {
         </div>
 
         {/* Sidebar Footer */}
-        <div className="p-4 border-t border-slate-200/60">
+        <div className="p-4 border-t border-slate-200/60 space-y-2">
+          {!syncStatus.loading && !syncStatus.enabled && (
+            <div 
+              className="p-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-[10px] cursor-pointer hover:bg-amber-100"
+              onClick={() => {
+                chrome.tabs.create({ url: 'chrome://settings/syncSetup' });
+              }}
+              title="Chrome 동기화 설정 열기"
+            >
+              <div className="font-bold mb-1">⚠️ 동기화 비활성화</div>
+              <div className="text-amber-700">다른 기기에서 데이터를 가져올 수 없습니다. Chrome 동기화 설정을 확인하세요.</div>
+            </div>
+          )}
           <div className="flex items-center gap-3 p-2 rounded-lg bg-white shadow-sm border border-slate-100 cursor-pointer hover:bg-slate-50">
             <div className="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center text-xs font-bold text-slate-600">
               U
             </div>
             <div className="flex-1 min-w-0">
               <div className="text-xs font-bold text-slate-700">User</div>
-              <div className="text-[10px] text-slate-400">Free Plan</div>
+              <div className="text-[10px] text-slate-400">
+                {syncStatus.loading ? '동기화 확인 중...' : 
+                 syncStatus.enabled ? '동기화 활성화' : '동기화 비활성화'}
+              </div>
             </div>
             <Settings size={14} className="text-slate-400" />
           </div>

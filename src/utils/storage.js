@@ -4,6 +4,31 @@
  */
 
 /**
+ * 동기화 상태 확인
+ * @returns {Promise<{enabled: boolean, error?: string}>}
+ */
+export async function checkSyncStatus() {
+  return new Promise((resolve) => {
+    // chrome.storage.sync.getBytesInUse를 사용하여 동기화 가능 여부 확인
+    chrome.storage.sync.getBytesInUse(null, (bytesInUse) => {
+      if (chrome.runtime.lastError) {
+        // 동기화가 비활성화되었거나 오류가 발생한 경우
+        resolve({
+          enabled: false,
+          error: chrome.runtime.lastError.message || '동기화를 사용할 수 없습니다',
+        });
+      } else {
+        // 동기화가 활성화된 경우
+        resolve({
+          enabled: true,
+          bytesInUse: bytesInUse,
+        });
+      }
+    });
+  });
+}
+
+/**
  * 스토리지에서 데이터 가져오기
  * @param {string|string[]} keys - 가져올 키 또는 키 배열
  * @returns {Promise<any>}
