@@ -67,7 +67,25 @@ export async function ensureUnsavedWorkspace() {
  */
 export async function getWorkspaces() {
   const data = await getStorage(STORAGE_KEYS.WORKSPACES);
-  return data[STORAGE_KEYS.WORKSPACES] || [];
+  let workspaces = data[STORAGE_KEYS.WORKSPACES] || [];
+  
+  // 마이그레이션: order 필드가 없는 워크스페이스에 order 추가
+  let needsSave = false;
+  workspaces = workspaces.map((ws, index) => {
+    if (ws.order === undefined) {
+      needsSave = true;
+      // Unsaved 워크스페이스는 항상 0, 나머지는 순차적으로 할당
+      const order = ws.id === UNSAVED_WORKSPACE_ID ? 0 : (index + 1) * 100;
+      return { ...ws, order };
+    }
+    return ws;
+  });
+  
+  if (needsSave) {
+    await saveWorkspaces(workspaces);
+  }
+  
+  return workspaces;
 }
 
 /**
@@ -86,11 +104,18 @@ export async function saveWorkspaces(workspaces) {
  */
 export async function addWorkspace(workspace) {
   const workspaces = await getWorkspaces();
+  
+  // 기존 워크스페이스 중 최대 order 값 찾기 (Unsaved 제외)
+  const maxOrder = workspaces
+    .filter(ws => ws.id !== UNSAVED_WORKSPACE_ID && ws.order !== undefined)
+    .reduce((max, ws) => Math.max(max, ws.order || 0), 0);
+  
   const newWorkspace = {
     id: workspace.id || `ws-${Date.now()}`,
     name: workspace.name || '새 워크스페이스',
     color: workspace.color || 'bg-blue-500',
     icon: workspace.icon || 'briefcase',
+    order: workspace.order !== undefined ? workspace.order : maxOrder + 100,
     createdAt: workspace.createdAt || Date.now(),
     updatedAt: Date.now(),
   };
@@ -118,6 +143,50 @@ export async function updateWorkspace(workspaceId, updates) {
   };
   await saveWorkspaces(workspaces);
   return workspaces[index];
+}
+
+/**
+ * 워크스페이스 순서 변경
+ * @param {string} draggedWorkspaceId - 드래그한 워크스페이스 ID
+ * @param {string} targetWorkspaceId - 드롭 대상 워크스페이스 ID
+ * @returns {Promise<void>}
+ */
+export async function reorderWorkspaces(draggedWorkspaceId, targetWorkspaceId) {
+  // Unsaved 워크스페이스는 순서 변경 불가
+  if (draggedWorkspaceId === UNSAVED_WORKSPACE_ID || targetWorkspaceId === UNSAVED_WORKSPACE_ID) {
+    return;
+  }
+  
+  const workspaces = await getWorkspaces();
+  
+  // Unsaved를 제외한 워크스페이스만 필터링 및 정렬
+  const otherWorkspaces = workspaces.filter(ws => ws.id !== UNSAVED_WORKSPACE_ID);
+  const unsavedWorkspace = workspaces.find(ws => ws.id === UNSAVED_WORKSPACE_ID);
+  
+  // 드래그한 워크스페이스와 대상 워크스페이스 찾기
+  const draggedIndex = otherWorkspaces.findIndex(ws => ws.id === draggedWorkspaceId);
+  const targetIndex = otherWorkspaces.findIndex(ws => ws.id === targetWorkspaceId);
+  
+  if (draggedIndex === -1 || targetIndex === -1) {
+    return;
+  }
+  
+  // 워크스페이스 배열에서 순서 변경
+  const [draggedWorkspace] = otherWorkspaces.splice(draggedIndex, 1);
+  otherWorkspaces.splice(targetIndex, 0, draggedWorkspace);
+  
+  // order 값 재할당 (100 단위로)
+  otherWorkspaces.forEach((ws, index) => {
+    ws.order = (index + 1) * 100;
+    ws.updatedAt = Date.now();
+  });
+  
+  // Unsaved 워크스페이스를 맨 앞에 추가
+  const reorderedWorkspaces = unsavedWorkspace 
+    ? [unsavedWorkspace, ...otherWorkspaces]
+    : otherWorkspaces;
+  
+  await saveWorkspaces(reorderedWorkspaces);
 }
 
 /**

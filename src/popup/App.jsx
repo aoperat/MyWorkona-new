@@ -16,6 +16,7 @@ import {
   Trash2,
   CheckCircle,
   Circle,
+  Loader2,
 } from 'lucide-react';
 import {
   getWorkspaces,
@@ -40,6 +41,7 @@ import {
   addTodo,
   toggleTodo,
   deleteTodo,
+  reorderWorkspaces,
 } from '../utils/workspace.js';
 import { checkSyncStatus } from '../utils/storage.js';
 import { 
@@ -53,17 +55,21 @@ import {
   extractDomain,
 } from '../utils/tabs.js';
 
-const SidebarItem = ({ workspace, isActive, onClick, onDelete, onDragOver, onDrop }) => (
+const SidebarItem = ({ workspace, isActive, onClick, onDelete, onDragOver, onDrop, onDragStart, isDraggable }) => (
   <div className="group relative">
     <button
       onClick={onClick}
+      draggable={isDraggable}
+      onDragStart={onDragStart}
       onDragOver={onDragOver}
       onDrop={onDrop}
       className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-all duration-200
         ${isActive
           ? 'bg-white shadow-sm text-slate-800 ring-1 ring-slate-200'
           : 'text-slate-500 hover:bg-slate-100 hover:text-slate-900'
-        }`}
+        }
+        ${isDraggable ? 'cursor-move' : ''}
+      `}
     >
       <div className={`w-2 h-2 rounded-full ${workspace.color}`} />
       <span className="flex-1 text-left truncate font-medium">{workspace.name}</span>
@@ -196,6 +202,7 @@ export default function App() {
   const [todos, setTodos] = useState([]);
   const [newTodoText, setNewTodoText] = useState('');
   const [syncStatus, setSyncStatus] = useState({ enabled: true, loading: true });
+  const [isSwitchingWorkspace, setIsSwitchingWorkspace] = useState(false);
 
   // 초기 데이터 로드
   useEffect(() => {
@@ -368,7 +375,24 @@ export default function App() {
   };
 
   const handleWorkspaceChange = async (workspaceId) => {
+    // 이미 전환 중이면 무시
+    if (isSwitchingWorkspace) {
+      return;
+    }
+    
+    // 같은 워크스페이스로 전환하려고 하면 무시
+    if (workspaceId === activeWorkspaceId) {
+      return;
+    }
+    
+    // 최소 딜레이를 보장하기 위한 시작 시간 기록
+    const startTime = Date.now();
+    const MIN_SWITCH_DELAY = 300; // 최소 300ms 딜레이
+    
     try {
+      // 전환 중 상태 설정
+      setIsSwitchingWorkspace(true);
+      
       // 워크스페이스 전환 시작 알림 (Background 스크립트가 탭 변경을 무시하도록 함)
       await setWorkspaceSwitchingState(true);
       
@@ -512,8 +536,13 @@ export default function App() {
       }
     } catch (error) {
       console.error('워크스페이스 변경 실패:', error);
+      setIsSwitchingWorkspace(false);
+      await setWorkspaceSwitchingState(false);
     } finally {
-      // 워크스페이스 전환 종료 (약간의 지연 후)
+      // 최소 딜레이 보장
+      const elapsed = Date.now() - startTime;
+      const remainingDelay = Math.max(0, MIN_SWITCH_DELAY - elapsed);
+      
       setTimeout(async () => {
         await setWorkspaceSwitchingState(false);
         // 전환 완료 후 현재 상태와 동기화 (누락된 탭이 없도록)
@@ -521,7 +550,11 @@ export default function App() {
           await loadWorkspaceData(workspaceId);
           await loadCurrentTabs();
         }
-      }, 500);
+        // 전환 중 상태 해제 (추가 딜레이로 연속 전환 방지)
+        setTimeout(() => {
+          setIsSwitchingWorkspace(false);
+        }, 100);
+      }, 300 + remainingDelay);
     }
   };
 
@@ -665,6 +698,42 @@ export default function App() {
   const handleDragOver = (e) => {
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
+  };
+
+  // 워크스페이스 드래그 앤 드롭 핸들러
+  const handleWorkspaceDragStart = (e, workspaceId) => {
+    if (workspaceId === UNSAVED_WORKSPACE_ID) {
+      e.preventDefault();
+      return;
+    }
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('application/json', JSON.stringify({ type: 'workspace', workspaceId }));
+  };
+
+  const handleWorkspaceDragOver = (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+  };
+
+  const handleWorkspaceDrop = async (e, targetWorkspaceId) => {
+    e.preventDefault();
+    try {
+      const data = JSON.parse(e.dataTransfer.getData('application/json'));
+      if (data.type === 'workspace' && data.workspaceId && data.workspaceId !== targetWorkspaceId) {
+        // Unsaved 워크스페이스는 순서 변경 불가
+        if (data.workspaceId === UNSAVED_WORKSPACE_ID || targetWorkspaceId === UNSAVED_WORKSPACE_ID) {
+          return;
+        }
+        
+        await reorderWorkspaces(data.workspaceId, targetWorkspaceId);
+        
+        // 워크스페이스 목록 새로고침
+        const updatedWorkspaces = await getWorkspaces();
+        setWorkspaces(updatedWorkspaces);
+      }
+    } catch (error) {
+      console.error('워크스페이스 순서 변경 실패:', error);
+    }
   };
 
   const handleDropOnWorkspace = async (e, targetWorkspaceId) => {
@@ -872,17 +941,62 @@ export default function App() {
               // Unsaved 워크스페이스를 항상 맨 위에
               if (a.id === UNSAVED_WORKSPACE_ID) return -1;
               if (b.id === UNSAVED_WORKSPACE_ID) return 1;
-              return 0;
+              // order 필드 기준으로 정렬
+              const orderA = a.order !== undefined ? a.order : 999999;
+              const orderB = b.order !== undefined ? b.order : 999999;
+              return orderA - orderB;
             })
             .map((ws) => (
               <SidebarItem
                 key={ws.id}
                 workspace={ws}
                 isActive={activeWorkspaceId === ws.id}
-                onClick={() => handleWorkspaceChange(ws.id)}
+                onClick={() => {
+                  if (!isSwitchingWorkspace) {
+                    handleWorkspaceChange(ws.id);
+                  }
+                }}
                 onDelete={workspaces.length > 1 && ws.id !== UNSAVED_WORKSPACE_ID ? handleDeleteWorkspace : null}
-                onDragOver={handleDragOver}
-                onDrop={(e) => handleDropOnWorkspace(e, ws.id)}
+                onDragOver={(e) => {
+                  // 탭 드래그와 워크스페이스 드래그 구분
+                  const data = e.dataTransfer.types.includes('application/json') 
+                    ? e.dataTransfer.getData('application/json') 
+                    : null;
+                  if (data) {
+                    try {
+                      const parsed = JSON.parse(data);
+                      if (parsed.type === 'workspace') {
+                        handleWorkspaceDragOver(e);
+                      } else {
+                        handleDragOver(e);
+                      }
+                    } catch {
+                      handleDragOver(e);
+                    }
+                  } else {
+                    handleDragOver(e);
+                  }
+                }}
+                onDrop={(e) => {
+                  // 탭 드롭과 워크스페이스 드롭 구분
+                  const data = e.dataTransfer.getData('application/json');
+                  if (data) {
+                    try {
+                      const parsed = JSON.parse(data);
+                      if (parsed.type === 'workspace') {
+                        handleWorkspaceDrop(e, ws.id);
+                      } else {
+                        handleDropOnWorkspace(e, ws.id);
+                      }
+                    } catch {
+                      handleDropOnWorkspace(e, ws.id);
+                    }
+                  } else {
+                    handleDropOnWorkspace(e, ws.id);
+                  }
+                }}
+                onDragStart={(e) => handleWorkspaceDragStart(e, ws.id)}
+                isDraggable={ws.id !== UNSAVED_WORKSPACE_ID}
               />
             ))}
 
@@ -978,6 +1092,9 @@ export default function App() {
               <div className="flex items-center gap-2">
                 <span className={`w-2.5 h-2.5 rounded-full ${activeWorkspace.color}`}></span>
                 <h1 className="text-lg font-bold text-slate-800">{activeWorkspace.name}</h1>
+                {isSwitchingWorkspace && (
+                  <Loader2 size={16} className="text-indigo-500 animate-spin" />
+                )}
                 <span className="px-2 py-0.5 bg-slate-100 text-slate-500 rounded-md text-xs font-medium">
                   {activeWorkspaceId === UNSAVED_WORKSPACE_ID ? workspaceTabs.length : savedTabs.length} tabs
                 </span>
