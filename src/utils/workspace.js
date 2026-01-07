@@ -448,8 +448,10 @@ async function deleteNote(workspaceId) {
   delete allNotes[workspaceId];
   await setStorage({ [STORAGE_KEYS.NOTES]: allNotes });
 }
+
 /**
- * ?�두 목록 가?�오�? * @param {string} workspaceId - ?�크?�페?�스 ID
+ * 투두 목록 가져오기
+ * @param {string} workspaceId - 워크스페이스 ID
  * @returns {Promise<Array>}
  */
 export async function getTodos(workspaceId) {
@@ -459,8 +461,9 @@ export async function getTodos(workspaceId) {
 }
 
 /**
- * ?�두 목록 ?�?? * @param {string} workspaceId - ?�크?�페?�스 ID
- * @param {Array} todos - ?�두 배열
+ * 투두 목록 저장
+ * @param {string} workspaceId - 워크스페이스 ID
+ * @param {Array} todos - 투두 배열
  * @returns {Promise<void>}
  */
 export async function saveTodos(workspaceId, todos) {
@@ -471,9 +474,9 @@ export async function saveTodos(workspaceId, todos) {
 }
 
 /**
- * ?�두 추�?
- * @param {string} workspaceId - ?�크?�페?�스 ID
- * @param {string} text - ?�두 ?�용
+ * 투두 추가
+ * @param {string} workspaceId - 워크스페이스 ID
+ * @param {string} text - 투두 내용
  * @returns {Promise<Object>}
  */
 export async function addTodo(workspaceId, text) {
@@ -490,9 +493,9 @@ export async function addTodo(workspaceId, text) {
 }
 
 /**
- * ?�두 ?�태 ?��?
- * @param {string} workspaceId - ?�크?�페?�스 ID
- * @param {string} todoId - ?�두 ID
+ * 투두 상태 토글
+ * @param {string} workspaceId - 워크스페이스 ID
+ * @param {string} todoId - 투두 ID
  * @returns {Promise<void>}
  */
 export async function toggleTodo(workspaceId, todoId) {
@@ -505,9 +508,9 @@ export async function toggleTodo(workspaceId, todoId) {
 }
 
 /**
- * ?�두 ??��
- * @param {string} workspaceId - ?�크?�페?�스 ID
- * @param {string} todoId - ?�두 ID
+ * 투두 삭제
+ * @param {string} workspaceId - 워크스페이스 ID
+ * @param {string} todoId - 투두 ID
  * @returns {Promise<void>}
  */
 export async function deleteTodo(workspaceId, todoId) {
@@ -517,8 +520,8 @@ export async function deleteTodo(workspaceId, todoId) {
 }
 
 /**
- * ?�두 목록 ??�� (?�크?�페?�스 ??�� ??
- * @param {string} workspaceId - ?�크?�페?�스 ID
+ * 투두 목록 삭제 (워크스페이스 삭제 시)
+ * @param {string} workspaceId - 워크스페이스 ID
  * @returns {Promise<void>}
  */
 async function deleteTodos(workspaceId) {
